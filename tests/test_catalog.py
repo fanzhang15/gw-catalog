@@ -2,6 +2,7 @@ import math
 import numpy as np
 
 from lensgraph.data.catalog_simulator import CatalogConfig, generate_catalog
+from lensgraph.data.lens_models import ALLOWED_MORSE_PHASES, PM_MAX_MASS_MSUN
 
 
 def _cfg(n=600):
@@ -16,7 +17,10 @@ def _cfg(n=600):
 
 def test_schema_complete():
     events = generate_catalog(_cfg(100))
-    required = {"event_id", "source_id", "system_type", "image_index", "magnification", "time_delay", "morse_phase", "intrinsic_params", "strain"}
+    required = {
+        "event_id", "source_id", "system_type", "image_index", "magnification", "time_delay",
+        "morse_phase", "intrinsic_params", "strain", "lens_family", "lens_mass_msun"
+    }
     assert required.issubset(events[0].keys())
     assert events[0]["strain"].shape == (4096,)
 
@@ -38,6 +42,15 @@ def test_prevalence_convergence():
     events = generate_catalog(_cfg(2000))
     prevalence = sum(e["system_type"] != "isolated" for e in events) / len(events)
     assert math.isclose(prevalence, 0.3, rel_tol=0.1)
+
+
+def test_morse_phase_and_pm_mass_limits():
+    events = generate_catalog(_cfg(800))
+    for e in events:
+        assert e["morse_phase"] in ALLOWED_MORSE_PHASES
+        if e["lens_family"] == "PM":
+            assert e["lens_mass_msun"] is not None
+            assert e["lens_mass_msun"] <= PM_MAX_MASS_MSUN
 
 
 def test_no_nan_inf():

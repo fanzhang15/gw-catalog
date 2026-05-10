@@ -4,6 +4,9 @@ from dataclasses import dataclass
 import math
 import random
 
+ALLOWED_MORSE_PHASES = (0.0, math.pi / 2, math.pi)
+PM_MAX_MASS_MSUN = 1e7
+
 
 @dataclass
 class LensImage:
@@ -13,33 +16,43 @@ class LensImage:
     morse_phase: float
 
 
-def _morse_phase_from_parity(parity: int) -> float:
-    if parity > 0:
-        return 0.0
-    return math.pi / 2
+@dataclass
+class LensSystemSample:
+    lens_family: str
+    lens_mass_msun: float | None
+    images: list[LensImage]
 
 
-def sample_pm_doublet() -> list[LensImage]:
+def sample_pm_doublet() -> LensSystemSample:
+    lens_mass_msun = random.uniform(10.0, PM_MAX_MASS_MSUN)
     mag1 = random.uniform(1.1, 3.0)
     mag2 = random.uniform(0.7, 2.0)
     dt = random.uniform(0.01, 7.5)
-    return [
-        LensImage(0, mag1, 0.0, 0.0),
-        LensImage(1, mag2, dt, _morse_phase_from_parity(-1)),
-    ]
+    return LensSystemSample(
+        lens_family="PM",
+        lens_mass_msun=lens_mass_msun,
+        images=[
+            LensImage(0, mag1, 0.0, 0.0),
+            LensImage(1, mag2, dt, math.pi / 2),
+        ],
+    )
 
 
-def sample_sis_doublet() -> list[LensImage]:
+def sample_sis_doublet() -> LensSystemSample:
     mag1 = random.uniform(1.2, 4.0)
     mag2 = random.uniform(0.8, 2.5)
     dt = random.uniform(0.1, 15.0)
-    return [
-        LensImage(0, mag1, 0.0, 0.0),
-        LensImage(1, mag2, dt, math.pi / 2),
-    ]
+    return LensSystemSample(
+        lens_family="SIS",
+        lens_mass_msun=None,
+        images=[
+            LensImage(0, mag1, 0.0, 0.0),
+            LensImage(1, mag2, dt, math.pi / 2),
+        ],
+    )
 
 
-def sample_sie_multiplet(multiplicity: int) -> list[LensImage]:
+def sample_sie_multiplet(multiplicity: int) -> LensSystemSample:
     assert multiplicity in (3, 4)
     images: list[LensImage] = [LensImage(0, random.uniform(1.2, 3.0), 0.0, 0.0)]
     for idx in range(1, multiplicity):
@@ -48,7 +61,7 @@ def sample_sie_multiplet(multiplicity: int) -> list[LensImage]:
                 idx,
                 random.uniform(0.6, 2.2),
                 random.uniform(0.2, 20.0) * idx,
-                [0.0, math.pi / 2, math.pi][idx % 3],
+                ALLOWED_MORSE_PHASES[idx % len(ALLOWED_MORSE_PHASES)],
             )
         )
-    return images
+    return LensSystemSample(lens_family="SIE", lens_mass_msun=None, images=images)

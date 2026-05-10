@@ -4,7 +4,13 @@ from dataclasses import dataclass
 import uuid
 import numpy as np
 
-from .lens_models import sample_pm_doublet, sample_sis_doublet, sample_sie_multiplet
+from .lens_models import (
+    ALLOWED_MORSE_PHASES,
+    PM_MAX_MASS_MSUN,
+    sample_pm_doublet,
+    sample_sis_doublet,
+    sample_sie_multiplet,
+)
 
 
 @dataclass
@@ -47,7 +53,18 @@ def _lensed_strain(base: np.ndarray, magnification: float, shift: int) -> np.nda
     return (np.roll(base, shift) * np.sqrt(magnification)).astype(np.float32)
 
 
+def _validate_inputs(cfg: CatalogConfig) -> None:
+    if cfg.n_total <= 0:
+        raise ValueError("n_total must be > 0")
+    if not (0 <= cfg.lens_prevalence <= 1):
+        raise ValueError("lens_prevalence must be in [0, 1]")
+    total_prob = sum(cfg.multiplicity_distribution.values())
+    if not np.isclose(total_prob, 1.0):
+        raise ValueError("multiplicity_distribution probabilities must sum to 1")
+
+
 def generate_catalog(cfg: CatalogConfig) -> list[dict]:
+    _validate_inputs(cfg)
     rng = np.random.default_rng(cfg.seed)
     events: list[dict] = []
     n_lensed = int(cfg.n_total * cfg.lens_prevalence)
@@ -59,44 +76,60 @@ def generate_catalog(cfg: CatalogConfig) -> list[dict]:
         intrinsic = _sample_intrinsic(rng)
         base = _base_strain(rng, cfg.strain_length)
         mult = rng.choice(list(cfg.multiplicity_distribution.keys()), p=list(cfg.multiplicity_distribution.values()))
+
         if mult == "doublet":
-            images = sample_sis_doublet() if rng.random() > 0.5 else sample_pm_doublet()
+            system = sample_sis_doublet() if rng.random() > 0.5 else sample_pm_doublet()
         elif mult == "triplet":
-            images = sample_sie_multiplet(3)
+            system = sample_sie_multiplet(3)
+        elif mult == "quadruplet":
+            system = sample_sie_multiplet(4)
         else:
-            images = sample_sie_multiplet(4)
-        for img in images:
+            raise ValueError(f"unsupported multiplicity label: {mult}")
+
+        if system.lens_family == "PM" and system.lens_mass_msun is not None:
+            assert system.lens_mass_msun <= PM_MAX_MASS_MSUN
+
+        for img in system.images:
             if lensed_budget >= n_lensed:
                 break
+            assert img.morse_phase in ALLOWED_MORSE_PHASES
             shift = int(min(cfg.strain_length - 1, img.time_delay * 8))
             strain = _lensed_strain(base, img.magnification, shift)
-            events.append({
-                "event_id": f"EVT-{uuid.uuid4().hex[:12]}",
-                "source_id": source_id,
-                "system_type": mult,
-                "image_index": img.image_index,
-                "magnification": float(img.magnification),
-                "time_delay": float(img.time_delay),
-                "morse_phase": float(img.morse_phase),
-                "intrinsic_params": intrinsic,
-                "strain": strain,
-            })
+            events.append(
+                {
+                    "event_id": f"EVT-{uuid.uuid4().hex[:12]}",
+                    "source_id": source_id,
+                    "system_type": mult,
+                    "image_index": img.image_index,
+                    "magnification": float(img.magnification),
+                    "time_delay": float(img.time_delay),
+                    "morse_phase": float(img.morse_phase),
+                    "lens_family": system.lens_family,
+                    "lens_mass_msun": system.lens_mass_msun,
+                    "intrinsic_params": intrinsic,
+                    "strain": strain,
+                }
+            )
             lensed_budget += 1
 
     for _ in range(n_isolated):
         intrinsic = _sample_intrinsic(rng)
         strain = _base_strain(rng, cfg.strain_length)
-        events.append({
-            "event_id": f"EVT-{uuid.uuid4().hex[:12]}",
-            "source_id": f"SRC-{uuid.uuid4().hex[:12]}",
-            "system_type": "isolated",
-            "image_index": 0,
-            "magnification": 1.0,
-            "time_delay": 0.0,
-            "morse_phase": 0.0,
-            "intrinsic_params": intrinsic,
-            "strain": strain,
-        })
+        events.append(
+            {
+                "event_id": f"EVT-{uuid.uuid4().hex[:12]}",
+                "source_id": f"SRC-{uuid.uuid4().hex[:12]}",
+                "system_type": "isolated",
+                "image_index": 0,
+                "magnification": 1.0,
+                "time_delay": 0.0,
+                "morse_phase": 0.0,
+                "lens_family": "none",
+                "lens_mass_msun": None,
+                "intrinsic_params": intrinsic,
+                "strain": strain,
+            }
+        )
 
     rng.shuffle(events)
     return events
